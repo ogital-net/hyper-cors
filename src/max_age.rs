@@ -62,24 +62,7 @@ impl Default for MaxAgeInner {
 }
 
 fn seconds_to_header_value(seconds: u64) -> Option<HeaderValue> {
-    let mut buf = Vec::with_capacity(20);
-    let mut n = seconds;
-    if n == 0 {
-        buf.push(b'0');
-    } else {
-        let mut tmp = [0u8; 20];
-        let mut i = 0;
-        while n > 0 {
-            tmp[i] = b'0' + (n % 10) as u8;
-            n /= 10;
-            i += 1;
-        }
-        while i > 0 {
-            i -= 1;
-            buf.push(tmp[i]);
-        }
-    }
-    HeaderValue::from_bytes(&buf).ok()
+    HeaderValue::from_str(itoa::Buffer::new().format(seconds)).ok()
 }
 
 #[cfg(test)]

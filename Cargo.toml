@@ -28,12 +28,13 @@ include = [
 hyper            = { version = "1", features = ["server"] }
 http             = "1"
 bytes            = "1"
+itoa             = "1"
 pin-project-lite = "0.2"
 
 [dev-dependencies]
 tokio          = { version = "1", features = ["macros", "rt", "rt-multi-thread", "net", "time", "sync"] }
 http-body-util = "0.1"
-hyper-util     = { version = "0.1", features = ["server", "server-auto", "http1", "tokio"] }
+hyper-util     = { version = "0.1", features = ["server", "http1", "tokio"] }
 
 [lints.rust]
 unsafe_code = "deny"

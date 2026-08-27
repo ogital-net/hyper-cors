@@ -346,6 +346,10 @@ fn merge_headers(target: &mut HeaderMap, headers: &HeaderBuf) {
     }
 }
 
+/// Inline capacity for [`dedup_vary`]'s output buffer. Sized to comfortably hold the default
+/// CORS `Vary` (~62 bytes) plus one or two inner-service tokens.
+const DEDUP_VARY_STACK: usize = 128;
+
 /// Returns `value` with tokens already present in `target`'s `Vary` removed, or `None` when
 /// every token is already covered.
 fn dedup_vary(target: &HeaderMap, value: &HeaderValue) -> Option<HeaderValue> {
@@ -362,22 +366,54 @@ fn dedup_vary(target: &HeaderMap, value: &HeaderValue) -> Option<HeaderValue> {
         return Some(value.clone());
     }
 
-    let mut out: Vec<u8> = Vec::new();
+    let mut stack = [0u8; DEDUP_VARY_STACK];
+    let mut len = 0usize;
+    // Set when the output outgrows the stack buffer; subsequent writes go to `heap` instead.
+    let mut heap: Option<Vec<u8>> = None;
+
     for tok in value.as_bytes().split(|&b| b == b',') {
         let tok = tok.trim_ascii();
         if tok.is_empty() || already_listed(target, tok) {
             continue;
         }
-        if !out.is_empty() {
-            out.extend_from_slice(b", ");
+        let needs_sep = match &heap {
+            Some(v) => !v.is_empty(),
+            None => len > 0,
+        };
+        let sep_len = if needs_sep { 2 } else { 0 };
+        let total = sep_len + tok.len();
+
+        if heap.is_none() {
+            // Fast path: still in stack buffer.
+            if len + total <= DEDUP_VARY_STACK {
+                if needs_sep {
+                    stack[len..len + 2].copy_from_slice(b", ");
+                }
+                stack[len + sep_len..len + total].copy_from_slice(tok);
+                len += total;
+                continue;
+            }
+            // Spill to heap, copying what we already have.
+            let mut v = Vec::with_capacity(len + total);
+            v.extend_from_slice(&stack[..len]);
+            heap = Some(v);
         }
-        out.extend_from_slice(tok);
+
+        let v = heap.as_mut().expect("set on spill");
+        if needs_sep {
+            v.extend_from_slice(b", ");
+        }
+        v.extend_from_slice(tok);
     }
 
-    if out.is_empty() {
+    let bytes: &[u8] = match &heap {
+        Some(v) => v.as_slice(),
+        None => &stack[..len],
+    };
+    if bytes.is_empty() {
         return None;
     }
-    HeaderValue::from_bytes(&out).ok()
+    HeaderValue::from_bytes(bytes).ok()
 }
 
 #[cfg(test)]

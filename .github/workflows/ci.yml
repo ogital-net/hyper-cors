@@ -45,9 +45,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.80
       - uses: Swatinem/rust-cache@v2
-      # Cargo.lock is gitignored, so `--locked` doesn't apply. `--lib` keeps
-      # dev-deps out of the MSRV build.
-      - run: cargo check --lib --verbose
+      # `--locked` pins the dep tree to the committed Cargo.lock so the MSRV
+      # check can't drift when fresh minors land. `--lib` keeps dev-deps out
+      # of the MSRV build.
+      - run: cargo check --lib --locked --verbose
 
   docs:
     name: rustdoc
