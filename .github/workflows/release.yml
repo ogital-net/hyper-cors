@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Tag pushes already serialize, but the concurrency group keeps a manual
+# re-run from racing an in-flight publish.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Reject mismatched tags before anything expensive runs.
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest="$(cargo pkgid | sed 's/.*#//')"
+          [ "$tag" = "$manifest" ] || { echo "::error::tag $tag != Cargo.toml version $manifest"; exit 1; }
+
+      # `cargo publish --dry-run` packages, compiles the tarball, and stops
+      # short of uploading — i.e. it's both the manifest check and the
+      # build verification in one step.
+      - name: Dry-run publish
+        run: cargo publish --dry-run
+
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish

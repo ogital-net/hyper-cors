@@ -13,6 +13,17 @@ readme       = "README.md"
 keywords     = ["hyper", "cors", "http", "middleware"]
 categories   = ["web-programming::http-server", "web-programming::http-client"]
 
+# Explicit include list for the published crate.
+include = [
+    "Cargo.toml",
+    "LICENSE",
+    "README.md",
+    "src/**/*.rs",
+    "examples/**/*.rs",
+    "tests/**/*.rs",
+    "tests/common/**/*.rs",
+]
+
 [dependencies]
 hyper            = { version = "1", features = ["server"] }
 http             = "1"
