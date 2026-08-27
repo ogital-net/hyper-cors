@@ -1,0 +1,31 @@
+[package]
+name         = "hyper-cors"
+version      = "0.1.0"
+edition      = "2021"
+rust-version = "1.80"
+description  = "CORS middleware for hyper 1.x"
+license      = "BSD-2-Clause"
+authors      = []
+repository   = "https://github.com/ogital-net/hyper-cors"
+homepage     = "https://github.com/ogital-net/hyper-cors"
+documentation = "https://docs.rs/hyper-cors"
+readme       = "README.md"
+keywords     = ["hyper", "cors", "http", "middleware"]
+categories   = ["web-programming::http-server", "web-programming::http-client"]
+
+[dependencies]
+hyper            = { version = "1", features = ["server"] }
+http             = "1"
+bytes            = "1"
+pin-project-lite = "0.2"
+
+[dev-dependencies]
+tokio          = { version = "1", features = ["macros", "rt", "rt-multi-thread", "net", "time", "sync"] }
+http-body-util = "0.1"
+hyper-util     = { version = "0.1", features = ["server", "server-auto", "http1", "tokio"] }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
