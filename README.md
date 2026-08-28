@@ -9,8 +9,6 @@ protocol to every request. Preflight requests (`OPTIONS` with
 `Access-Control-Request-Method`) are short-circuited by default, so the inner service never
 sees them.
 
-The only dependencies are `hyper`, `http`, `http-body-util`, `bytes`, and `pin-project-lite`.
-
 ## Example
 
 ```rust
