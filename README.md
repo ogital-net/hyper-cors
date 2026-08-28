@@ -56,6 +56,8 @@ Per-tenant origins can be served from a cached sync predicate
 
 `CorsBuilder::build` panics on Fetch-mandated incompatibilities: `allow_credentials: true`
 combined with `*` in `allow_origin`, `allow_methods`, `allow_headers`, or `expose_headers`.
+Use [`CorsBuilder::try_build`] to receive the same diagnostics as a `Result` and surface
+them as a startup error instead.
 
 ## Examples
 
@@ -75,3 +77,4 @@ BSD 2-Clause
 [`AllowOrigin::predicate`]: https://docs.rs/hyper-cors/latest/hyper_cors/struct.AllowOrigin.html#method.predicate
 [`AllowOrigin::async_predicate`]: https://docs.rs/hyper-cors/latest/hyper_cors/struct.AllowOrigin.html#method.async_predicate
 [`CorsBuilder`]: https://docs.rs/hyper-cors/latest/hyper_cors/struct.CorsBuilder.html
+[`CorsBuilder::try_build`]: https://docs.rs/hyper-cors/latest/hyper_cors/struct.CorsBuilder.html#method.try_build

@@ -11,9 +11,9 @@ use bytes::Bytes;
 use http::{Method, Request, Response};
 use http_body_util::Full;
 use hyper::body::Incoming;
+use hyper::server::conn::http1::Builder as Http1Builder;
 use hyper::service::Service;
-use hyper_util::rt::{TokioExecutor, TokioIo};
-use hyper_util::server::conn::auto::Builder as ServerBuilder;
+use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
@@ -70,13 +70,15 @@ async fn main() {
 
     loop {
         let (stream, _) = listener.accept().await.expect("accept");
+        // `serve_connection` takes the service by value (hyper 1.x API), so we clone
+        // per accepted connection. The clone is cheap: `Cors<S>` holds the configuration
+        // behind an `Arc<CorsBuilder>`, and the `Tenants` cache is itself behind an `Arc`
+        // shared with the async predicate, so the only per-connection work is two atomic
+        // refcount bumps.
         let svc = cors.clone();
         tokio::spawn(async move {
             let io = TokioIo::new(stream);
-            if let Err(err) = ServerBuilder::new(TokioExecutor::new())
-                .serve_connection(io, svc)
-                .await
-            {
+            if let Err(err) = Http1Builder::new().serve_connection(io, svc).await {
                 eprintln!("connection error: {err}");
             }
         });

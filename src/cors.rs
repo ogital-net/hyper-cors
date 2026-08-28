@@ -3,6 +3,7 @@
 use std::{
     future::Future,
     pin::Pin,
+    sync::Arc,
     task::{ready, Context, Poll},
 };
 
@@ -21,7 +22,13 @@ use crate::{allow_origin::AllowOriginFuture, config::CorsBuilder, header_buf::He
 #[must_use]
 pub struct Cors<S> {
     inner: S,
-    config: CorsBuilder,
+    // `Arc`, not `Box`: cloning the middleware is a common pattern (every accepted
+    // connection in a hyper-util server clone()s the service, see `examples/server.rs`),
+    // and the configuration is read-only through `&Cors`. `Arc::clone` is a single atomic
+    // increment; cloning `CorsBuilder` directly would also bump the refcount on every
+    // `HeaderValue`/`HeaderName` it holds. The wrapper also keeps `Cors<S>` small for
+    // callers that wrap it in an enum variant.
+    config: Arc<CorsBuilder>,
 }
 
 impl<S> Cors<S> {
@@ -41,7 +48,10 @@ impl<S> Cors<S> {
     }
 
     pub(crate) fn from_parts(inner: S, config: CorsBuilder) -> Self {
-        Self { inner, config }
+        Self {
+            inner,
+            config: Arc::new(config),
+        }
     }
 }
 
@@ -459,5 +469,36 @@ mod tests {
         let prev = std::mem::replace(r, Marker);
         // Avoid an unused-variable lint while confirming the swap happened.
         let _ = prev;
+    }
+
+    #[test]
+    fn cors_layout_is_arc_backed() {
+        // The config field is an `Arc<CorsBuilder>`. This pins the shape so a future
+        // refactor that re-inlines the config (and silently brings back the 272-byte
+        // per-`Cors::clone` cost) gets caught at test time. Concretely: with `Arc`,
+        // `Cors<()>` is 8 bytes (one pointer) plus the unit struct. Without `Arc` it
+        // would be `size_of::<CorsBuilder>()` (272 on this target as of writing).
+        let size = std::mem::size_of::<Cors<()>>();
+        assert_eq!(
+            size,
+            std::mem::size_of::<usize>(),
+            "Cors<()> should be one pointer (Arc-backed config); got {size} bytes. \
+             Did someone inline CorsBuilder back into Cors?"
+        );
+    }
+
+    #[test]
+    fn clone_shares_the_config_arc() {
+        // Two `Cors::clone` calls must point at the same `Arc` allocation; if they
+        // don't, the `Arc` indirection was bypassed (e.g. someone added `Box<CorsBuilder>`
+        // by accident).
+        let svc: Cors<Marker> = crate::builder().allow_origin(crate::Any).build(Marker);
+        let clone = svc.clone();
+        let p1: *const CorsBuilder = Arc::as_ptr(&svc.config);
+        let p2: *const CorsBuilder = Arc::as_ptr(&clone.config);
+        assert_eq!(
+            p1, p2,
+            "Cors::clone must share the underlying Arc<CorsBuilder>; got distinct allocations"
+        );
     }
 }

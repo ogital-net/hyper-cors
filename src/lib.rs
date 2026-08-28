@@ -52,7 +52,7 @@ pub use allow_credentials::AllowCredentials;
 pub use allow_headers::AllowHeaders;
 pub use allow_methods::AllowMethods;
 pub use allow_origin::{AllowOrigin, Any};
-pub use config::CorsBuilder;
+pub use config::{ConfigError, CorsBuilder};
 pub use cors::{builder, Cors};
 pub use expose_headers::ExposeHeaders;
 pub use max_age::MaxAge;

@@ -25,9 +25,9 @@ use bytes::Bytes;
 use http::{Method, Request, Response};
 use http_body_util::Full;
 use hyper::body::Incoming;
+use hyper::server::conn::http1::Builder as Http1Builder;
 use hyper::service::Service;
-use hyper_util::rt::{TokioExecutor, TokioIo};
-use hyper_util::server::conn::auto::Builder as ServerBuilder;
+use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
 use hyper_cors::Cors;
@@ -63,10 +63,7 @@ async fn main() {
         let svc = cors.clone();
         tokio::spawn(async move {
             let io = TokioIo::new(stream);
-            if let Err(err) = ServerBuilder::new(TokioExecutor::new())
-                .serve_connection(io, svc)
-                .await
-            {
+            if let Err(err) = Http1Builder::new().serve_connection(io, svc).await {
                 eprintln!("connection error: {err}");
             }
         });

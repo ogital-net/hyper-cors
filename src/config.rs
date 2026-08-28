@@ -1,10 +1,41 @@
 //! Builder for the [`Cors`] middleware.
 
+use std::fmt;
 use std::time::Duration;
 
 use crate::{
     AllowCredentials, AllowHeaders, AllowMethods, AllowOrigin, ExposeHeaders, MaxAge, Vary,
 };
+
+/// Error returned by [`CorsBuilder::try_build`] when the configuration violates a
+/// Fetch-mandated incompatibility.
+///
+/// Mirrors the panics produced by [`CorsBuilder::build`], so callers can choose to surface
+/// the message as a startup error rather than a process abort.
+///
+/// [`CorsBuilder::build`]: CorsBuilder::build
+/// [`CorsBuilder::try_build`]: CorsBuilder::try_build
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub struct ConfigError {
+    message: &'static str,
+}
+
+impl ConfigError {
+    fn new(message: &'static str) -> Self {
+        Self { message }
+    }
+}
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Prefix with `Invalid CORS configuration:` to match the wording of the legacy
+        // `assert!` messages, so existing log-grep tooling keeps working.
+        write!(f, "Invalid CORS configuration: {}", self.message)
+    }
+}
+
+impl std::error::Error for ConfigError {}
 
 /// Builder for [`Cors`].
 ///
@@ -172,45 +203,70 @@ impl CorsBuilder {
         self
     }
 
-    /// Builds the [`Cors`] middleware wrapping `inner`.
+    /// Builds the [`Cors`] middleware wrapping `inner`, validating the configuration.
     ///
     /// # Panics
     ///
-    /// Panics if any of the Fetch-mandated incompatibilities are violated:
-    /// `allow_credentials: true` combined with `allow_origin: *`, `allow_methods: *`,
-    /// `allow_headers: *`, or `expose_headers: *`.
+    /// Panics if any of the Fetch-mandated incompatibilities are violated. Use
+    /// [`Self::try_build`] to receive the same diagnostics as a `Result` and translate them
+    /// into a startup error instead of a panic.
     ///
     /// [`Cors`]: crate::Cors
     pub fn build<S>(self, inner: S) -> crate::Cors<S> {
-        self.validate();
-        let mut me = self;
-        me.update_vary();
-        crate::Cors::from_parts(inner, me)
+        match self.try_build(inner) {
+            Ok(cors) => cors,
+            Err(e) => panic!("{e}"),
+        }
     }
 
-    fn validate(&self) {
-        if self.allow_credentials.is_true() {
-            assert!(
-                !self.allow_origin.is_wildcard(),
-                "Invalid CORS configuration: cannot combine `Access-Control-Allow-Credentials: true` \
-                 with `Access-Control-Allow-Origin: *`. Echo the request origin instead."
-            );
-            assert!(
-                !self.allow_methods.is_wildcard(),
-                "Invalid CORS configuration: cannot combine `Access-Control-Allow-Credentials: true` \
-                 with `Access-Control-Allow-Methods: *`."
-            );
-            assert!(
-                !self.allow_headers.is_wildcard(),
-                "Invalid CORS configuration: cannot combine `Access-Control-Allow-Credentials: true` \
-                 with `Access-Control-Allow-Headers: *`."
-            );
-            assert!(
-                !self.expose_headers.is_wildcard(),
-                "Invalid CORS configuration: cannot combine `Access-Control-Allow-Credentials: true` \
-                 with `Access-Control-Expose-Headers: *`."
-            );
+    /// Builds the [`Cors`] middleware wrapping `inner`, validating the configuration.
+    ///
+    /// Use this in startup paths so misconfiguration surfaces as a regular error rather
+    /// than a process abort. [`Self::build`] panics with the same message.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ConfigError`] when any Fetch-mandated incompatibility is violated:
+    /// `allow_credentials: true` combined with `*` in `allow_origin`, `allow_methods`,
+    /// `allow_headers`, or `expose_headers`.
+    ///
+    /// [`Cors`]: crate::Cors
+    pub fn try_build<S>(self, inner: S) -> Result<crate::Cors<S>, ConfigError> {
+        self.validate()?;
+        let mut me = self;
+        me.update_vary();
+        Ok(crate::Cors::from_parts(inner, me))
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        if !self.allow_credentials.is_true() {
+            return Ok(());
         }
+        if self.allow_origin.is_wildcard() {
+            return Err(ConfigError::new(
+                "cannot combine `Access-Control-Allow-Credentials: true` \
+                 with `Access-Control-Allow-Origin: *`. Echo the request origin instead.",
+            ));
+        }
+        if self.allow_methods.is_wildcard() {
+            return Err(ConfigError::new(
+                "cannot combine `Access-Control-Allow-Credentials: true` \
+                 with `Access-Control-Allow-Methods: *`.",
+            ));
+        }
+        if self.allow_headers.is_wildcard() {
+            return Err(ConfigError::new(
+                "cannot combine `Access-Control-Allow-Credentials: true` \
+                 with `Access-Control-Allow-Headers: *`.",
+            ));
+        }
+        if self.expose_headers.is_wildcard() {
+            return Err(ConfigError::new(
+                "cannot combine `Access-Control-Allow-Credentials: true` \
+                 with `Access-Control-Expose-Headers: *`.",
+            ));
+        }
+        Ok(())
     }
 
     /// Recompute the default `Vary` header set, unless the user pinned it via [`Self::vary`].
@@ -233,5 +289,96 @@ impl CorsBuilder {
             names.push(http::header::ACCESS_CONTROL_REQUEST_HEADERS);
         }
         self.vary = Vary::list(names);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn origin() -> AllowOrigin {
+        // Pick any non-wildcard origin so credentials can be combined safely.
+        AllowOrigin::exact(http::HeaderValue::from_static("https://app.example.com"))
+    }
+
+    #[test]
+    fn try_build_succeeds_for_default_config() {
+        // Default config has credentials disabled; no incompatibilities to trip.
+        let builder = CorsBuilder::new();
+        let result: Result<crate::Cors<()>, ConfigError> = builder.try_build(());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn try_build_succeeds_for_credentials_with_concrete_origin_and_headers() {
+        let builder = CorsBuilder::new()
+            .allow_credentials(AllowCredentials::yes())
+            .allow_origin(origin());
+        let result: Result<crate::Cors<()>, ConfigError> = builder.try_build(());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn try_build_rejects_credentials_with_wildcard_origin() {
+        let builder = CorsBuilder::new()
+            .allow_credentials(AllowCredentials::yes())
+            .allow_origin(crate::Any);
+        let err = builder
+            .try_build::<()>(())
+            .expect_err("wildcard origin must be rejected");
+        assert!(err.to_string().contains("Allow-Origin: *"));
+    }
+
+    #[test]
+    fn try_build_rejects_credentials_with_wildcard_methods() {
+        let builder = CorsBuilder::new()
+            .allow_credentials(AllowCredentials::yes())
+            .allow_origin(origin())
+            .allow_methods(crate::AllowMethods::any());
+        let err = builder
+            .try_build::<()>(())
+            .expect_err("wildcard methods must be rejected");
+        assert!(err.to_string().contains("Allow-Methods: *"));
+    }
+
+    #[test]
+    fn try_build_rejects_credentials_with_wildcard_headers() {
+        let builder = CorsBuilder::new()
+            .allow_credentials(AllowCredentials::yes())
+            .allow_origin(origin())
+            .allow_headers(crate::AllowHeaders::any());
+        let err = builder
+            .try_build::<()>(())
+            .expect_err("wildcard headers must be rejected");
+        assert!(err.to_string().contains("Allow-Headers: *"));
+    }
+
+    #[test]
+    fn try_build_rejects_credentials_with_wildcard_expose_headers() {
+        let builder = CorsBuilder::new()
+            .allow_credentials(AllowCredentials::yes())
+            .allow_origin(origin())
+            .expose_headers(crate::ExposeHeaders::any());
+        let err = builder
+            .try_build::<()>(())
+            .expect_err("wildcard expose-headers must be rejected");
+        assert!(err.to_string().contains("Expose-Headers: *"));
+    }
+
+    #[test]
+    fn build_still_panics_on_incompatible_config() {
+        // `build` is the legacy panic-on-error path. Pin its behavior so a future refactor
+        // can't silently swap it to a Result-returning signature.
+        //
+        // `AssertUnwindSafe` is required because `CorsBuilder` holds an `Arc<dyn Fn(...)>`
+        // for the optional sync-predicate origin path, which is not `RefUnwindSafe`. The
+        // predicate doesn't actually mutate any captured state in this test, so opting out
+        // of the check is sound.
+        let builder = CorsBuilder::new()
+            .allow_credentials(AllowCredentials::yes())
+            .allow_origin(crate::Any);
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| builder.build::<()>(())));
+        assert!(result.is_err(), "build must panic on wildcard origin");
     }
 }
